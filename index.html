@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Neon Snake — Glasses Girl</title>
+<style>
+  :root{
+    --bg:#0a0a1a; --panel:rgba(255,255,255,.06); --text:#E9F2FF; --accent:#8AFFEC;
+  }
+  html,body{height:100%;margin:0;background:radial-gradient(1200px 600px at 20% 10%, #1a1a40, #0a0a1a 60%);color:var(--text);font:16px/1.6 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+  .wrap{max-width:960px;margin:0 auto;padding:16px;display:grid;gap:12px}
+  h1{margin:8px 0 0;font-weight:800;letter-spacing:.5px}
+  .hud{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .card{background:var(--panel);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:10px 14px}
+  #canvas{width:100%;max-width:600px;aspect-ratio:1;border-radius:16px;border:2px solid rgba(255,255,255,.12);background:#0b0b1f;margin:0 auto;display:block}
+  .btn{cursor:pointer;border:1px solid rgba(255,255,255,.18);background:linear-gradient(180deg, rgba(255,255,255,.12), rgba(255,255,255,.04));color:var(--text);padding:8px 12px;border-radius:10px}
+  .btn:hover{border-color:var(--accent)}
+  .legend{display:flex;gap:8px;flex-wrap:wrap}
+  .tag{padding:2px 8px;border:1px solid rgba(255,255,255,.16);border-radius:999px;font-size:13px}
+  .kbd{background:#11142c;border:1px solid rgba(255,255,255,.18);padding:2px 6px;border-radius:6px}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Neon Snake — <span style="color:#FFB3E6">Glasses Girl</span></h1>
+    <div class="hud">
+      <div class="card">Score: <span id="score">0</span></div>
+      <div class="card">Speed: <span id="speed">Normal</span></div>
+      <button id="startBtn" class="btn">Start / Pause (Space)</button>
+      <button id="restartBtn" class="btn">Restart (R)</button>
+    </div>
+    <canvas id="canvas" width="600" height="600" aria-label="Snake Game"></canvas>
+    <div class="card legend">
+      <span class="tag">🍎 Apple = +1 length</span>
+      <span class="tag">💣 Bomb / Wall / Self = Game Over</span>
+      <span class="tag">Controls: <span class="kbd">↑</span><span class="kbd">↓</span><span class="kbd">←</span><span class="kbd">→</span> or <span class="kbd">W A S D</span></span>
+    </div>
+  </div>
+
+<script>
+(() => {
+  const cvs = document.getElementById('canvas');
+  const ctx = cvs.getContext('2d');
+  const scoreEl = document.getElementById('score');
+  const speedEl = document.getElementById('speed');
+  const startBtn = document.getElementById('startBtn');
+  const restartBtn = document.getElementById('restartBtn');
+
+  const CELL = 20; // grid cell size
+  const GRID = 30; // 30x30 => 600x600
+  const TICK_BASE = 110; // ms
+
+  let snake, dir, nextDir, apple, bombs, running, tick, score, speedName;
+
+  function reset() {
+    snake = [ {x:10, y:15}, {x:9,y:15}, {x:8,y:15}, {x:7,y:15} ];
+    dir = {x:1,y:0};
+    nextDir = {x:1,y:0};
+    score = 0;
+    bombs = [];
+    placeApple();
+    running = false;
+    speedName = 'Normal';
+    updateHUD();
+    draw();
+  }
+
+  function updateHUD(){
+    scoreEl.textContent = score;
+    speedEl.textContent = speedName;
+  }
+
+  function randInt(min, max){ return Math.floor(Math.random()*(max-min+1))+min; }
+  function cellFree(x,y){
+    return !snake.some(s=>s.x===x && s.y===y) && !bombs.some(b=>b.x===x && b.y===y);
+  }
+
+  function placeApple(){
+    let x,y; do { x = randInt(0,GRID-1); y = randInt(0,GRID-1);} while(!cellFree(x,y));
+    apple = {x,y};
+  }
+
+  function placeBomb(){
+    let x,y; do { x = randInt(0,GRID-1); y = randInt(0,GRID-1);} while(!cellFree(x,y) || (Math.abs(x-snake[0].x)+Math.abs(y-snake[0].y) < 4));
+    bombs.push({x,y, ttl: randInt(120,240)}); // ttl in ticks (2–4 * seconds roughly)
+  }
+
+  function gameOver(){
+    running = false;
+    clearInterval(tick);
+    draw(true);
+  }
+
+  function step(){
+    // occasionally spawn bombs, max 8
+    if (Math.random() < 0.03 && bombs.length < 8) placeBomb();
+    bombs.forEach(b=>b.ttl--); bombs = bombs.filter(b=>b.ttl>0);
+
+    // apply next direction if not reversing
+    if ((nextDir.x !== -dir.x || nextDir.y !== -dir.y)) dir = nextDir;
+
+    const head = {x: snake[0].x + dir.x, y: snake[0].y + dir.y};
+
+    // collisions with wall
+    if (head.x<0 || head.y<0 || head.x>=GRID || head.y>=GRID) return gameOver();
+    // self collision
+    if (snake.some(seg=>seg.x===head.x && seg.y===head.y)) return gameOver();
+    // bomb collision
+    if (bombs.some(b=>b.x===head.x && b.y===head.y)) return gameOver();
+
+    snake.unshift(head);
+
+    if (head.x === apple.x && head.y === apple.y){
+      score++;
+      // speed up slightly
+      if (score === 5) setSpeed(95, 'Fast');
+      if (score === 12) setSpeed(85, 'Faster');
+      placeApple();
+    } else {
+      snake.pop();
+    }
+
+    draw();
+    updateHUD();
+  }
+
+  function setSpeed(ms, name){
+    clearInterval(tick); tick = setInterval(step, ms); speedName = name; updateHUD(); running = true;
+  }
+
+  function startPause(){
+    if (running){ clearInterval(tick); running = false; return; }
+    setSpeed(TICK_BASE, 'Normal');
+  }
+
+  function restart(){ reset(); }
+
+  // drawing helpers
+  function draw(backgroundFlash=false){
+    // background gradient
+    const g = ctx.createLinearGradient(0,0,cvs.width,cvs.height);
+    g.addColorStop(0,'#150050'); g.addColorStop(.5,'#2E0F4F'); g.addColorStop(1,'#001F54');
+    ctx.fillStyle = g; ctx.fillRect(0,0,cvs.width,cvs.height);
+
+    // grid glow
+    ctx.save();
+    ctx.globalAlpha = .06; ctx.strokeStyle = '#9AE6FF';
+    for(let i=0;i<=GRID;i++){
+      ctx.beginPath(); ctx.moveTo(i*CELL,0); ctx.lineTo(i*CELL,cvs.height); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0,i*CELL); ctx.lineTo(cvs.width,i*CELL); ctx.stroke();
+    }
+    ctx.restore();
+
+    // draw apple
+    drawApple(apple.x, apple.y);
+
+    // bombs
+    bombs.forEach(b=>drawBomb(b.x,b.y));
+
+    // snake body
+    for (let i=snake.length-1;i>=1;i--){
+      drawBody(snake[i].x, snake[i].y, i);
+    }
+    // head last so it is on top
+    drawHead(snake[0].x, snake[0].y);
+
+    if (backgroundFlash){
+      ctx.fillStyle = 'rgba(255,0,70,0.18)';
+      ctx.fillRect(0,0,cvs.width,cvs.height);
+      ctx.fillStyle = '#FFD6E7';
+      ctx.font = 'bold 28px system-ui';
+      ctx.textAlign = 'center';
+      ctx.fillText('Game Over — press R to restart', cvs.width/2, cvs.height/2);
+    }
+  }
+
+  function cellCenter(x,y){ return {cx:x*CELL+CELL/2, cy:y*CELL+CELL/2}; }
+
+  function drawApple(x,y){
+    const {cx,cy} = cellCenter(x,y);
+    ctx.save();
+    // neon glow
+    ctx.shadowColor = '#FF4D6D'; ctx.shadowBlur = 18;
+    ctx.fillStyle = '#FF2E63';
+    ctx.beginPath(); ctx.arc(cx, cy, CELL*0.38, 0, Math.PI*2); ctx.fill();
+    // leaf
+    ctx.shadowBlur = 0; ctx.fillStyle = '#9AE66E';
+    ctx.beginPath(); ctx.ellipse(cx+6, cy-12, 6, 10, -0.6, 0, Math.PI*2); ctx.fill();
+    // highlight
+    ctx.fillStyle='rgba(255,255,255,.6)'; ctx.beginPath(); ctx.arc(cx-4, cy-6, 4, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+  }
+
+  function drawBomb(x,y){
+    const {cx,cy} = cellCenter(x,y);
+    ctx.save();
+    ctx.shadowColor = '#FFD166'; ctx.shadowBlur = 14;
+    ctx.fillStyle = '#111';
+    ctx.beginPath(); ctx.arc(cx, cy, CELL*0.35, 0, Math.PI*2); ctx.fill();
+    // fuse
+    ctx.strokeStyle = '#FFD166'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(cx+6,cy-6); ctx.quadraticCurveTo(cx+12,cy-18,cx+2,cy-20); ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawBody(x,y,i){
+    const {cx,cy} = cellCenter(x,y);
+    // rainbow color along body
+    const hue = (i*12 + score*15) % 360;
+    ctx.fillStyle = `hsl(${hue} 85% 55% / 0.9)`;
+    ctx.strokeStyle = 'rgba(255,255,255,.28)';
+    ctx.lineWidth = 1;
+    roundRect(cx-CELL*0.42, cy-CELL*0.42, CELL*0.84, CELL*0.84, 6, true, true);
+  }
+
+  function roundRect(x,y,w,h,r,fill,stroke){
+    ctx.beginPath();
+    ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r);
+    if (fill) ctx.fill(); if (stroke) ctx.stroke();
+  }
+
+  function drawHead(x,y){
+    const {cx,cy} = cellCenter(x,y);
+    // big rounded head
+    ctx.save();
+    const grad = ctx.createLinearGradient(cx-20,cy-20,cx+20,cy+20);
+    grad.addColorStop(0,'#90F7EC'); grad.addColorStop(1,'#32CCBC');
+    ctx.fillStyle = grad; ctx.strokeStyle='rgba(0,0,0,.25)'; ctx.lineWidth = 2;
+    roundRect(cx-CELL*0.55, cy-CELL*0.55, CELL*1.1, CELL*1.1, 10, true, true);
+
+    // hair bow (pink)
+    ctx.fillStyle = '#FF77B7';
+    ctx.beginPath(); ctx.moveTo(cx-10, cy-16); ctx.lineTo(cx-20, cy-8); ctx.lineTo(cx-10, cy-6); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(cx, cy-16); ctx.lineTo(cx+10, cy-6); ctx.lineTo(cx, cy-8); ctx.closePath(); ctx.fill();
+
+    // glasses — two lenses & bridge
+    ctx.shadowColor = '#00E5FF'; ctx.shadowBlur = 12;
+    ctx.strokeStyle = '#00E5FF'; ctx.lineWidth = 2.4; ctx.fillStyle = 'rgba(255,255,255,.75)';
+    ctx.beginPath(); ctx.arc(cx-6, cy-2, 7.5, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx+6, cy-2, 7.5, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx-1,cy-2); ctx.lineTo(cx+1,cy-2); ctx.stroke();
+
+    // cute smile
+    ctx.shadowBlur = 0; ctx.strokeStyle = 'rgba(0,0,0,.45)'; ctx.lineWidth = 1.6;
+    ctx.beginPath(); ctx.arc(cx, cy+6, 6, 0.15*Math.PI, 0.85*Math.PI); ctx.stroke();
+
+    ctx.restore();
+  }
+
+  // controls
+  window.addEventListener('keydown', e=>{
+    const k = e.key.toLowerCase();
+    if (k === ' '){ e.preventDefault(); startPause(); }
+    if (k === 'r'){ restart(); }
+    if (k === 'arrowup' || k === 'w') nextDir = {x:0,y:-1};
+    if (k === 'arrowdown' || k === 's') nextDir = {x:0,y:1};
+    if (k === 'arrowleft' || k === 'a') nextDir = {x:-1,y:0};
+    if (k === 'arrowright' || k === 'd') nextDir = {x:1,y:0};
+  });
+
+  startBtn.addEventListener('click', startPause);
+  restartBtn.addEventListener('click', restart);
+
+  reset();
+})();
+</script>
+</body>
+</html>
