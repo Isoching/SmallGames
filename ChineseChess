@@ -1,0 +1,725 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>中国象棋 | Xiangqi</title>
+  <style>
+    :root{
+      --board-bg:#f3e7d3; /* rice paper */
+      --board-line:#7a5c3a;
+      --river:#b3d4fc;
+      --red:#c0392b;
+      --black:#2c3e50;
+      --hint:#2ecc71;
+      --select:#f39c12;
+    }
+    html,body{height:100%;margin:0;font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; background:#f7f5f0;}
+    .app{max-width:980px;margin:12px auto;padding:12px;}
+    .topbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+    .topbar h1{font-size:20px;margin:0 8px 0 0}
+    .pill{padding:6px 10px;border-radius:999px;border:1px solid #ddd;background:#fff}
+    button{border:0;border-radius:12px;padding:8px 12px;background:#222;color:#fff;cursor:pointer;box-shadow:0 2px 0 rgba(0,0,0,.2)}
+    button.alt{background:#666}
+    button:disabled{opacity:.5;cursor:not-allowed}
+    .status{margin-left:auto;display:flex;gap:10px;align-items:center}
+
+    .board-wrap{position:relative; width:min(90vw, 720px); aspect-ratio: 9/10; margin:auto;}
+    /* Board background */
+    .board{position:absolute; inset:0; background:radial-gradient(120% 120% at 50% 30%, #fff, var(--board-bg)); border-radius:16px; box-shadow: 0 20px 40px rgba(0,0,0,.15), inset 0 0 0 4px #d2c3a5}
+    /* Grid */
+    svg.board-grid{position:absolute; inset:16px}
+    /* River label */
+    .river-label{font-size:16px; fill:#5c7080; opacity:.7; font-weight:600}
+
+    /* Piece styling: 3D chips */
+    .piece{position:absolute; width:calc((100% - 32px) / 9 - 2px); aspect-ratio:1; transform: translate(-50%, -50%);
+           display:flex; align-items:center; justify-content:center; user-select:none; cursor:grab; z-index:3;
+           border-radius:50%;
+           background: radial-gradient(120% 120% at 30% 25%, #fff 0%, #f9f5ef 35%, #f0e6d6 60%, #e4d4b8 100%);
+           box-shadow: 0 2px 0 rgba(0,0,0,.25), 0 8px 16px rgba(0,0,0,.25), inset 0 0 0 2px #d9c7a3, inset 0 8px 20px rgba(0,0,0,.08);
+           transition: transform .08s ease;
+    }
+    .piece.red{color:var(--red)}
+    .piece.black{color:var(--black)}
+    .piece .face{font-size: calc((100vw - 64px)/20 + 16px); font-weight: 800; letter-spacing:1px; text-shadow: 0 1px 0 #fff, 0 2px 0 rgba(0,0,0,.2)}
+    .piece::after{content:""; position:absolute; inset:6%; border-radius:50%; box-shadow: inset 0 0 0 2px rgba(0,0,0,.15), inset 0 10px 20px rgba(0,0,0,.15)}
+    .piece:active{cursor:grabbing; transform: translate(-50%, -50%) scale(1.04)}
+
+    /* Selection ring */
+    .ring{position:absolute; width:calc((100% - 32px) / 9 - 2px); aspect-ratio:1; transform: translate(-50%, -50%); pointer-events:none; border-radius:50%; box-shadow:0 0 0 3px var(--select) inset; z-index:2}
+    .hint{position:absolute; width:18px; height:18px; transform: translate(-50%, -50%); border-radius:50%; background: var(--hint); opacity:.75; box-shadow: 0 0 0 4px rgba(46, 204, 113, .25)}
+    .hint.capture{background:#e74c3c}
+
+    /* Coordinates help */
+    .coords{position:absolute; left:8px; bottom:8px; font-size:12px; color:#666}
+
+    .panel{max-width:720px;margin:12px auto; display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:center}
+    .tag{padding:4px 8px; background:#fff; border-radius:8px; border:1px solid #eee}
+
+    .toast{position:fixed; left:50%; bottom:18px; transform: translateX(-50%); background:#222; color:#fff; padding:8px 12px; border-radius:10px; opacity:0; pointer-events:none; transition:opacity .25s ease}
+    .toast.show{opacity:1}
+
+    /* test log */
+    .testbar{max-width:720px;margin:8px auto;display:flex;gap:8px;align-items:center;justify-content:flex-start}
+    #testlog{max-width:720px;margin:0 auto; background:#111; color:#9ef59a; padding:8px 10px; border-radius:10px; min-height:0; max-height:180px; overflow:auto; font:12px/1.4 ui-monospace, Menlo, Consolas, Monaco}
+  </style>
+</head>
+<body>
+<div class="app">
+  <div class="topbar">
+    <h1>中国象棋 · Xiangqi</h1>
+    <label class="pill">模式：
+      <select id="mode">
+        <option value="pvp">双人对弈（同机）</option>
+        <option value="pvb">单人模式（对电脑）</option>
+      </select>
+    </label>
+    <label class="pill">AI 强度：
+      <select id="aiLevel">
+        <option value="fast">快速</option>
+        <option value="std" selected>标准</option>
+        <option value="hard">强力</option>
+      </select>
+    </label>
+    <button id="newGame">新开局</button>
+    <button id="undoBtn" class="alt" disabled>悔棋</button>
+    <button id="redoBtn" class="alt" disabled>重做</button>
+    <button id="runTestsBtn" class="alt">运行测试</button>
+    <div class="status">
+      <span class="tag" id="turnTag">红方走</span>
+      <span class="tag" id="checkTag" style="display:none">将军！</span>
+    </div>
+  </div>
+
+  <div class="board-wrap" id="boardWrap">
+    <div class="board"></div>
+    <svg class="board-grid" viewBox="0 0 900 1000">
+      <g id="gridLines" stroke="var(--board-line)" stroke-width="2"></g>
+      <!-- River -->
+      <rect x="0" y="450" width="900" height="100" fill="url(#riverGrad)" opacity="0.15" />
+      <defs>
+        <linearGradient id="riverGrad" x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0%" stop-color="var(--river)"/>
+          <stop offset="100%" stop-color="#e5f1ff"/>
+        </linearGradient>
+      </defs>
+      <text class="river-label" x="180" y="510">楚河</text>
+      <text class="river-label" x="630" y="510">汉界</text>
+    </svg>
+    <!-- rings and hints container -->
+    <div id="overlay" style="position:absolute; inset:16px;"></div>
+    <!-- pieces container -->
+    <div id="pieces" style="position:absolute; inset:16px;"></div>
+    <div class="coords" id="coords"></div>
+  </div>
+
+  <div class="panel">
+    <span>提示：点击棋子查看可落点，拖拽或点击移动。单人模式默认你执红先行。</span>
+  </div>
+
+  <div class="testbar">
+    <strong>测试日志</strong>
+  </div>
+  <pre id="testlog" aria-live="polite"></pre>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+// --- Utilities ---
+const BOARD_MARGIN=16; // px inset used above
+const COLS=9, ROWS=10;
+function id(x){return document.getElementById(x)}
+function toast(msg, ms=1400){const t=id('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),ms)}
+function sq(x,y){return y*COLS + x}
+function toXY(sq){return {x: sq%COLS, y: Math.floor(sq/COLS)}}
+function within(x,y){return x>=0&&x<COLS&&y>=0&&y<ROWS}
+function deepClone(o){return JSON.parse(JSON.stringify(o))}
+
+// Layout helpers
+const wrap = id('boardWrap');
+const overlay = id('overlay');
+const piecesLayer = id('pieces');
+let cellSizePx; // computed per resize
+
+function boardPx(x,y){ // to absolute px inside inset area
+  const w = wrap.clientWidth - BOARD_MARGIN*2;
+  const h = wrap.clientHeight - BOARD_MARGIN*2;
+  const gx = (x) * (w/(COLS-1));
+  const gy = (y) * (h/(ROWS-1));
+  return {left: gx, top: gy};
+}
+
+function computeGrid(){
+  // draw grid lines (leaving river gap between rows 4 and 5 for vertical)
+  const g = document.querySelector('#gridLines');
+  g.innerHTML='';
+  const w=900,h=1000; // viewBox
+  for(let r=0;r<ROWS;r++){
+    const y = r* (h/(ROWS-1));
+    const line = document.createElementNS('http://www.w3.org/2000/svg','line');
+    line.setAttribute('x1',0);line.setAttribute('x2',w);line.setAttribute('y1',y);line.setAttribute('y2',y);
+    g.appendChild(line);
+  }
+  for(let c=0;c<COLS;c++){
+    const x = c*(w/(COLS-1));
+    // upper part
+    const l1 = document.createElementNS('http://www.w3.org/2000/svg','line');
+    l1.setAttribute('x1',x); l1.setAttribute('x2',x); l1.setAttribute('y1',0); l1.setAttribute('y2',h/2 - h/(ROWS-1)/2);
+    g.appendChild(l1);
+    // lower part
+    const l2 = document.createElementNS('http://www.w3.org/2000/svg','line');
+    l2.setAttribute('x1',x); l2.setAttribute('x2',x); l2.setAttribute('y1',h/2 + h/(ROWS-1)/2); l2.setAttribute('y2',h);
+    g.appendChild(l2);
+  }
+}
+
+window.addEventListener('resize', ()=>{
+  const w = wrap.clientWidth - BOARD_MARGIN*2;
+  cellSizePx = w/(COLS-1);
+  renderPieces();
+})
+computeGrid();
+
+// --- Game state ---
+const RED='red', BLACK='black';
+const PIECES = { // type => display char
+  K:'帅', A:'仕', E:'相', R:'车', N:'马', C:'炮', P:'兵',
+  k:'将', a:'士', e:'象', r:'车', n:'马', c:'炮', p:'卒'
+};
+
+// Initial FEN-like (columns a-i -> 0-8, rows 0-9 top->bottom with black on top)
+// We'll just build from an array
+function startPosition(){
+  return [
+    {t:'r',x:0,y:0,c:BLACK},{t:'n',x:1,y:0,c:BLACK},{t:'e',x:2,y:0,c:BLACK},{t:'a',x:3,y:0,c:BLACK},{t:'k',x:4,y:0,c:BLACK},{t:'a',x:5,y:0,c:BLACK},{t:'e',x:6,y:0,c:BLACK},{t:'n',x:7,y:0,c:BLACK},{t:'r',x:8,y:0,c:BLACK},
+    {t:'c',x:1,y:2,c:BLACK},{t:'c',x:7,y:2,c:BLACK},
+    {t:'p',x:0,y:3,c:BLACK},{t:'p',x:2,y:3,c:BLACK},{t:'p',x:4,y:3,c:BLACK},{t:'p',x:6,y:3,c:BLACK},{t:'p',x:8,y:3,c:BLACK},
+
+    {t:'P',x:0,y:6,c:RED},{t:'P',x:2,y:6,c:RED},{t:'P',x:4,y:6,c:RED},{t:'P',x:6,y:6,c:RED},{t:'P',x:8,y:6,c:RED},
+    {t:'C',x:1,y:7,c:RED},{t:'C',x:7,y:7,c:RED},
+    {t:'R',x:0,y:9,c:RED},{t:'N',x:1,y:9,c:RED},{t:'E',x:2,y:9,c:RED},{t:'A',x:3,y:9,c:RED},{t:'K',x:4,y:9,c:RED},{t:'A',x:5,y:9,c:RED},{t:'E',x:6,y:9,c:RED},{t:'N',x:7,y:9,c:RED},{t:'R',x:8,y:9,c:RED},
+  ];
+}
+
+let state = {
+  pieces: startPosition(),
+  turn: RED,
+  selected: null,
+  lastMove: null,
+  history: [],
+  future: [],
+  mode: 'pvp', // 'pvb'
+};
+
+let ZobHash = (function(){ // simple zobrist for repetition/fast hash (optional)
+  const rand=()=>Math.floor(Math.random()*2**31);
+  const table={};
+  for(let i=0;i<15;i++){table[i]=[];for(let s=0;s<90;s++)table[i][s]=rand()}
+  const mapIndex={'K':0,'A':1,'E':2,'R':3,'N':4,'C':5,'P':6,'k':7,'a':8,'e':9,'r':10,'n':11,'c':12,'p':13};
+  const turnKey=14;
+  return {
+    key(pos, turn){let h=0; for(const p of pos){h ^= table[mapIndex[p.t]][sq(p.x,p.y)];} if(turn===RED) h^=table[turnKey][0]; return h}
+  }
+})();
+
+// --- Rules ---
+function pieceAt(pos, x,y){return pos.find(p=>p.x===x&&p.y===y)}
+function isRed(p){return p.c===RED}
+function palaceContains(x,y,c){ if(c===RED) return x>=3&&x<=5&&y>=7&&y<=9; else return x>=3&&x<=5&&y>=0&&y<=2; }
+function acrossRiver(y,c){ return c===RED ? y<=4 : y>=5 }
+
+function blockersBetween(pos, x1,y1,x2,y2){
+  if(x1===x2){ const step = y2>y1?1:-1; let n=0; for(let y=y1+step; y!==y2; y+=step){ if(pieceAt(pos,x2,y)) n++; } return n; }
+  if(y1===y2){ const step = x2>x1?1:-1; let n=0; for(let x=x1+step; x!==x2; x+=step){ if(pieceAt(pos,x,y2)) n++; } return n; }
+  return 0;
+}
+
+function faceEachOther(pos){
+  const rK = pos.find(p=>p.t==='K');
+  const bK = pos.find(p=>p.t==='k');
+  if(!rK||!bK) return false;
+  if(rK.x!==bK.x) return false;
+  const n=blockersBetween(pos,rK.x,rK.y,bK.x,bK.y);
+  return n===0;
+}
+
+function generateMoves(pos, turn){
+  const moves=[];
+  for(const p of pos){ if(p.c!==turn) continue; const from=sq(p.x,p.y); const mvs = legalMovesForPiece(pos,p); for(const {x,y} of mvs){ moves.push({from, to:sq(x,y)}); } }
+  // filter leaving in check and flying general
+  const filtered=[];
+  for(const m of moves){ const next = makeMove(pos,m); if(!inCheck(next,turn) && !faceEachOther(next)){ filtered.push(m) } }
+  return filtered;
+}
+
+function inCheck(pos, color){
+  const king = pos.find(p=>p.c===color && (p.t==='K' || p.t==='k'));
+  if(!king) return false;
+  const enemy = color===RED?BLACK:RED;
+  return squareAttacked(pos, king.x, king.y, enemy);
+}
+
+function squareAttacked(pos, x,y, byColor){
+  // brute-force: can any enemy move to (x,y)? NOTE: must use raw piece rules (without self-check)
+  for(const p of pos){ if(p.c!==byColor) continue; const raw = legalMovesForPiece(pos,p,true); if(raw.some(m=>m.x===x && m.y===y)) return true; }
+  return false;
+}
+
+function legalMovesForPiece(pos, piece, raw=false){
+  const {x,y,c,t}=piece; const res=[];
+  const push=(nx,ny)=>{ if(!within(nx,ny)) return; const q=pieceAt(pos,nx,ny); if(!q) res.push({x:nx,y:ny}); else if(q.c!==c) res.push({x:nx,y:ny}); }
+  switch(t){
+    case 'R': case 'r':{ // rook/chariot
+      // 4 rays
+      for(let i=x-1;i>=0;i--){ const q=pieceAt(pos,i,y); res.push({x:i,y}); if(q) break; }
+      for(let i=x+1;i<COLS;i++){ const q=pieceAt(pos,i,y); res.push({x:i,y}); if(q) break; }
+      for(let j=y-1;j>=0;j--){ const q=pieceAt(pos,x,j); res.push({x,y:j}); if(q) break; }
+      for(let j=y+1;j<ROWS;j++){ const q=pieceAt(pos,x,j); res.push({x,y:j}); if(q) break; }
+      break;
+    }
+    case 'C': case 'c':{ // cannon
+      // move like rook without capture over blockers; capture must jump exactly one
+      // left
+      let blocked=false; let seen=0;
+      for(let i=x-1;i>=0;i--){ const q=pieceAt(pos,i,y); if(!blocked){ if(q){blocked=true; continue;} res.push({x:i,y}); }
+        else{ if(q){ seen++; if(seen===1){ if(q.c!==c) res.push({x:i,y}); } break; } }
+      }
+      // right
+      blocked=false; seen=0;
+      for(let i=x+1;i<COLS;i++){ const q=pieceAt(pos,i,y); if(!blocked){ if(q){blocked=true; continue;} res.push({x:i,y}); }
+        else{ if(q){ seen++; if(seen===1){ if(q.c!==c) res.push({x:i,y}); } break; } }
+      }
+      // up
+      blocked=false; seen=0;
+      for(let j=y-1;j>=0;j--){ const q=pieceAt(pos,x,j); if(!blocked){ if(q){blocked=true; continue;} res.push({x,y:j}); }
+        else{ if(q){ seen++; if(seen===1){ if(q.c!==c) res.push({x,y:j}); } break; } }
+      }
+      // down
+      blocked=false; seen=0;
+      for(let j=y+1;j<ROWS;j++){ const q=pieceAt(pos,x,j); if(!blocked){ if(q){blocked=true; continue;} res.push({x,y:j}); }
+        else{ if(q){ seen++; if(seen===1){ if(q.c!==c) res.push({x,y:j}); } break; } }
+      }
+      break;
+    }
+    case 'N': case 'n':{ // horse, with leg block
+      const steps=[{dx:1,dy:2, bx:0,by:1},{dx:-1,dy:2,bx:0,by:1},{dx:1,dy:-2,bx:0,by:-1},{dx:-1,dy:-2,bx:0,by:-1},
+                   {dx:2,dy:1,bx:1,by:0},{dx:2,dy:-1,bx:1,by:0},{dx:-2,dy:1,bx:-1,by:0},{dx:-2,dy:-1,bx:-1,by:0}];
+      for(const s of steps){ const nx=x+s.dx, ny=y+s.dy; const bx=x+s.bx, by=y+s.by; if(!within(nx,ny)) continue; if(pieceAt(pos,bx,by)) continue; const q=pieceAt(pos,nx,ny); if(!q||q.c!==c) res.push({x:nx,y:ny}); }
+      break;
+    }
+    case 'E': case 'e':{ // elephant/bishop (2,2), cannot cross river, eye blocked
+      const steps=[{dx:2,dy:2, bx:1,by:1},{dx:-2,dy:2,bx:-1,by:1},{dx:2,dy:-2,bx:1,by:-1},{dx:-2,dy:-2,bx:-1,by:-1}];
+      for(const s of steps){ const nx=x+s.dx, ny=y+s.dy; if(!within(nx,ny)) continue; if(acrossRiver(ny,c)) continue; if(pieceAt(pos,x+s.bx,y+s.by)) continue; const q=pieceAt(pos,nx,ny); if(!q||q.c!==c) res.push({x:nx,y:ny}); }
+      break;
+    }
+    case 'A': case 'a':{ // advisor/guard (1,1) within palace
+      const steps=[{dx:1,dy:1},{dx:-1,dy:1},{dx:1,dy:-1},{dx:-1,dy:-1}];
+      for(const s of steps){ const nx=x+s.dx, ny=y+s.dy; if(!within(nx,ny)) continue; if(!palaceContains(nx,ny,c)) continue; const q=pieceAt(pos,nx,ny); if(!q||q.c!==c) res.push({x:nx,y:ny}); }
+      break;
+    }
+    case 'K': case 'k':{ // general/king
+      const steps=[{dx:0,dy:1},{dx:0,dy:-1},{dx:1,dy:0},{dx:-1,dy:0}];
+      for(const s of steps){ const nx=x+s.dx, ny=y+s.dy; if(!within(nx,ny)) continue; if(!palaceContains(nx,ny,c)) continue; const q=pieceAt(pos,nx,ny); if(!q||q.c!==c) res.push({x:nx,y:ny}); }
+      // capturing facing king along file is handled by ray attacks in squareAttacked; moving into faceEachOther will be filtered later
+      break;
+    }
+    case 'P': case 'p':{ // soldier
+      const dir = (c===RED)?-1:1; // red moves up (towards y decreasing)
+      const forward = {x, y:y+dir}; if(within(forward.x,forward.y)){ const q=pieceAt(pos,forward.x,forward.y); if(!q||q.c!==c) res.push(forward); }
+      if(acrossRiver(y,c)){
+        for(const nx of [x-1,x+1]){ if(within(nx,y)){ const q=pieceAt(pos,nx,y); if(!q||q.c!==c) res.push({x:nx,y}); } }
+      }
+      break;
+    }
+  }
+  // If raw==false, further filtering (self-check) is done in generateMoves by making move
+  return res;
+}
+
+function makeMove(pos, move){
+  // Defensive: ignore null/ill-formed moves
+  if(!move || typeof move.from!=="number" || typeof move.to!=="number") return pos;
+  if(move.from===move.to) return pos;
+  const {from,to}=move; const a=toXY(from), b=toXY(to);
+  const next = deepClone(pos);
+  // locate moving piece BEFORE any splices
+  const i = next.findIndex(p=>p.x===a.x&&p.y===a.y);
+  if(i<0) return pos; // from-square empty; no change
+  const moving = next[i];
+  // remove captured (if any) using separate reference to avoid index shift bug
+  const j = next.findIndex(p=>p.x===b.x&&p.y===b.y);
+  if(j>=0 && j!==i) next.splice(j,1);
+  // now update the moving piece's coordinates
+  moving.x=b.x; moving.y=b.y;
+  return next;
+}
+
+// --- Rendering ---
+function clearOverlay(){overlay.innerHTML=''}
+function renderPieces(){
+  piecesLayer.innerHTML='';
+  clearOverlay();
+  for(const p of state.pieces){
+    const el = document.createElement('div');
+    el.className = 'piece '+(p.c===RED?'red':'black');
+    el.dataset.x=p.x; el.dataset.y=p.y; el.dataset.t=p.t; el.dataset.color=p.c;
+    const label = document.createElement('div'); label.className='face'; label.textContent = PIECES[p.t]; el.appendChild(label);
+    const pos = boardPx(p.x, p.y);
+    el.style.left = pos.left+'px'; el.style.top = pos.top+'px';
+    el.addEventListener('mousedown', onPieceDown);
+    el.addEventListener('touchstart', onPieceDown, {passive:false});
+    piecesLayer.appendChild(el);
+  }
+  if(state.selected){ drawSelection(state.selected) }
+  updateStatus();
+}
+
+function drawSelection(sel){
+  clearOverlay();
+  const ring = document.createElement('div'); ring.className='ring';
+  const pos = boardPx(sel.x, sel.y); ring.style.left=pos.left+'px'; ring.style.top=pos.top+'px';
+  overlay.appendChild(ring);
+  for(const m of sel.moves){
+    const dot=document.createElement('div'); dot.className='hint'+(pieceAt(state.pieces,m.x,m.y)?' capture':'');
+    const p2=boardPx(m.x,m.y); dot.style.left=p2.left+'px'; dot.style.top=p2.top+'px';
+    dot.addEventListener('click', ()=>applyMove({from:sq(sel.x,sel.y), to:sq(m.x,m.y)}));
+    overlay.appendChild(dot);
+  }
+}
+
+function updateStatus(){
+  id('turnTag').textContent = (state.turn===RED?'红方走':'黑方走');
+  const inCk = inCheck(state.pieces, state.turn);
+  id('checkTag').style.display = inCk? 'inline-block':'none';
+  id('undoBtn').disabled = state.history.length===0;
+  id('redoBtn').disabled = state.future.length===0;
+}
+
+// --- Interaction ---
+function xyFromClient(clientX, clientY){
+  const rect = piecesLayer.getBoundingClientRect();
+  const w = rect.width, h = rect.height;
+  const gx = (clientX-rect.left)/w * (COLS-1);
+  const gy = (clientY-rect.top)/h * (ROWS-1);
+  const x = Math.round(gx);
+  const y = Math.round(gy);
+  return {x,y};
+}
+
+function onPieceDown(e){
+  e.preventDefault();
+  const target = e.currentTarget;
+  const x = +target.dataset.x, y=+target.dataset.y;
+  const p = pieceAt(state.pieces, x,y);
+  if(!p) return;
+  if(p.c!==state.turn) { toast('还没到你走'); return; }
+  const moves = legalMovesForPiece(state.pieces, p).filter(m=>{
+    const next = makeMove(state.pieces,{from:sq(x,y),to:sq(m.x,m.y)});
+    return !inCheck(next, p.c) && !faceEachOther(next);
+  });
+  state.selected = {x,y,moves};
+  drawSelection(state.selected);
+
+  // Dragging support
+  const startPos = boardPx(x,y);
+  const startX = (e.touches? e.touches[0].clientX : e.clientX);
+  const startY = (e.touches? e.touches[0].clientY : e.clientY);
+  const ghost = target;
+  ghost.style.transition='none';
+  ghost.style.zIndex=5;
+
+  function moveEv(ev){
+    const cx = (ev.touches? ev.touches[0].clientX : ev.clientX);
+    const cy = (ev.touches? ev.touches[0].clientY : ev.clientY);
+    const dx = cx-startX, dy = cy-startY;
+    ghost.style.left = (startPos.left+dx)+'px';
+    ghost.style.top  = (startPos.top +dy)+'px';
+  }
+  function upEv(ev){
+    document.removeEventListener('mousemove', moveEv);
+    document.removeEventListener('mouseup', upEv);
+    document.removeEventListener('touchmove', moveEv);
+    document.removeEventListener('touchend', upEv);
+    ghost.style.transition='';
+    const pt = (ev.changedTouches? ev.changedTouches[0]:ev);
+    const {x:nx,y:ny} = xyFromClient(pt.clientX, pt.clientY);
+    const ok = state.selected.moves.find(m=>m.x===nx&&m.y===ny);
+    if(ok){ applyMove({from:sq(x,y), to:sq(nx,ny)}) }
+    else { const pxy=boardPx(x,y); ghost.style.left=pxy.left+'px'; ghost.style.top=pxy.top+'px'; }
+  }
+  document.addEventListener('mousemove', moveEv);
+  document.addEventListener('mouseup', upEv);
+  document.addEventListener('touchmove', moveEv, {passive:false});
+  document.addEventListener('touchend', upEv);
+}
+
+function applyMove(m){
+  // Save history
+  state.history.push({pieces: deepClone(state.pieces), turn: state.turn, last: state.lastMove});
+  state.future.length=0;
+  // execute
+  state.pieces = makeMove(state.pieces, m);
+  state.lastMove = m;
+  // switch turn
+  state.turn = (state.turn===RED?BLACK:RED);
+  state.selected=null; clearOverlay();
+  renderPieces();
+  // Detect end
+  const enemy = state.turn;
+  const legal = generateMoves(state.pieces, enemy);
+  if(legal.length===0){
+    if(inCheck(state.pieces, enemy)) toast((enemy===RED?'红方':'黑方')+'被将死，'+(enemy===RED?'黑方':'红方')+'胜');
+    else toast('和棋（困毙）');
+  } else {
+    // In single mode, make AI move if it's AI's turn
+    if(state.mode==='pvb' && state.turn===BLACK){ setTimeout(aiMove, 200); }
+  }
+}
+
+id('newGame').onclick=()=>{ state.pieces=startPosition(); state.turn=RED; state.selected=null; state.lastMove=null; state.history=[]; state.future=[]; renderPieces(); };
+
+id('undoBtn').onclick=()=>{
+  if(state.history.length){ const prev=state.history.pop(); state.future.push({pieces:deepClone(state.pieces),turn:state.turn,last:state.lastMove}); state.pieces=prev.pieces; state.turn=prev.turn; state.lastMove=prev.last; state.selected=null; clearOverlay(); renderPieces(); }
+};
+
+id('redoBtn').onclick=()=>{
+  if(state.future.length){ const nxt=state.future.pop(); state.history.push({pieces:deepClone(state.pieces),turn:state.turn,last:state.lastMove}); state.pieces=nxt.pieces; state.turn=nxt.turn; state.lastMove=nxt.last; state.selected=null; clearOverlay(); renderPieces(); }
+};
+
+id('mode').onchange=(e)=>{ state.mode=e.target.value; toast(state.mode==='pvp'?'已切换为双人同机':'已切换为单人模式'); if(state.mode==='pvb' && state.turn===BLACK){ setTimeout(aiMove, 200);} };
+
+// --- Stronger AI: Iterative Deepening + Alpha-Beta + TT + Quiescence ---
+const VALUES={K:10000,A:120,E:120,R:500,N:250,C:350,P:90, k:10000,a:120,e:120,r:500,n:250,c:350,p:90};
+const MVV={K:11000,A:300,E:300,R:900,N:550,C:650,P:200, k:11000,a:300,e:300,r:900,n:550,c:650,p:200};
+
+// piece-square tables (coarse), encouraging centralisation & advanced soldiers
+const PST = {
+  P: [
+    // y from 0 (black side) -> 9 (red side); we reflect for black by mirroring
+    [ 0,  0,  0,  5,  8,  5,  0,  0,  0], // 0
+    [ 0,  0,  4,  8, 10,  8,  4,  0,  0],
+    [ 0,  0,  6, 10, 12, 10,  6,  0,  0],
+    [ 0,  2,  6, 10, 12, 10,  6,  2,  0],
+    [ 0,  2,  6, 10, 12, 10,  6,  2,  0], // river
+    [ 2,  6, 10, 14, 16, 14, 10,  6,  2],
+    [ 4,  8, 12, 16, 18, 16, 12,  8,  4],
+    [ 4, 10, 14, 18, 20, 18, 14, 10,  4],
+    [ 6, 12, 18, 22, 24, 22, 18, 12,  6],
+    [ 8, 14, 20, 26, 28, 26, 20, 14,  8]
+  ]
+};
+
+function pstBonus(p){
+  if(p.t==='P' || p.t==='p'){
+    const tbl=PST.P;
+    const yy = (p.c===RED)? p.y : 9-p.y; // mirror for black
+    return tbl[yy][p.x] * (p.c===RED?1:-1) * 0.8;
+  }
+  return 0;
+}
+
+function evaluate(pos){ // material + mobility + PST + check penalty
+  let s=0; for(const p of pos){ s += (p.c===RED?1:-1) * (VALUES[p.t] + pstBonus(p)); }
+  const redMoves = generateMoves(pos, RED).length;
+  const blkMoves = generateMoves(pos, BLACK).length;
+  s += 0.15*(redMoves-blkMoves);
+  if(inCheck(pos, RED)) s-=12; if(inCheck(pos, BLACK)) s+=12;
+  return s;
+}
+
+// Transposition table
+const TT = new Map(); // key -> {depth, score, flag, best}
+const TT_EXACT=0, TT_LOWER=1, TT_UPPER=2;
+
+// Killer & History heuristics
+const KILLERS = {}; // `${ply}` -> [move1, move2]
+const HISTORY = new Map(); // moveKey -> score
+
+function moveKey(m){return `${m.from}-${m.to}`}
+function pushKiller(ply, m){ const k=KILLERS[ply]||(KILLERS[ply]=[]); if(!k.find(x=>x&&x.from===m.from&&x.to===m.to)){ k.unshift(m); if(k.length>2) k.pop(); } }
+function bumpHistory(m, depth){ const k=moveKey(m); HISTORY.set(k, (HISTORY.get(k)||0) + depth*depth); }
+
+function isCapture(pos, m){ const b=toXY(m.to); return !!pieceAt(pos,b.x,b.y); }
+function mvvLvaScore(pos, m){ const a=toXY(m.from), b=toXY(m.to); const victim = pieceAt(pos,b.x,b.y); const attacker = pieceAt(pos,a.x,a.y); if(!victim) return 0; return (MVV[victim.t]||0) - (VALUES[attacker.t]||0)/10; }
+
+function orderMoves(pos, side, moves, ttMove, ply){
+  const killers=KILLERS[ply]||[];
+  return moves.map(m=>{
+    let score=0;
+    if(ttMove && m.from===ttMove.from && m.to===ttMove.to) score+=1e6;
+    if(isCapture(pos,m)) score+=5e5 + mvvLvaScore(pos,m);
+    const mk=moveKey(m); if(HISTORY.has(mk)) score+=HISTORY.get(mk);
+    if(killers[0] && m.from===killers[0].from && m.to===killers[0].to) score+=2e5;
+    if(killers[1] && m.from===killers[1].from && m.to===killers[1].to) score+=1e5;
+    return {m,score};
+  }).sort((a,b)=>b.score-a.score).map(x=>x.m);
+}
+
+function quiescence(pos, side, alpha, beta){
+  // stand-pat
+  let stand = evaluate(pos) * (side===RED?1:-1);
+  if(stand>=beta) return beta;
+  if(stand>alpha) alpha=stand;
+  // consider only captures from this position
+  let caps = generateMoves(pos, side).filter(m=>isCapture(pos,m));
+  // MVV-LVA ordering
+  caps.sort((a,b)=>mvvLvaScore(pos,b)-mvvLvaScore(pos,a));
+  for(const m of caps){
+    const child=makeMove(pos,m);
+    const score = -quiescence(child, other(side), -beta, -alpha);
+    if(score>=beta) return beta;
+    if(score>alpha) alpha=score;
+  }
+  return alpha;
+}
+
+function searchRoot(pos, me, maxDepth, timeMs=800){
+  const start=performance.now();
+  let best=null, bestScore=-1e9;
+  let ttMove=null;
+  for(let depth=2; depth<=maxDepth; depth++){
+    let alpha=-1e9, beta=1e9;
+    const moves = orderMoves(pos, me, generateMoves(pos, me), ttMove, 0);
+    let localBest=null, localScore=-1e9;
+    for(const m of moves){
+      const child = makeMove(pos, m);
+      const sc = -negamax(child, other(me), depth-1, -beta, -alpha, 1, start, timeMs);
+      if(sc>localScore){ localScore=sc; localBest=m; }
+      if(sc>alpha){ alpha=sc; ttMove=m; }
+      if(alpha>=beta) break;
+      if(performance.now()-start>timeMs) break;
+    }
+    if(localBest){ best=localBest; bestScore=localScore; }
+    if(performance.now()-start>timeMs) break; // time cutoff
+  }
+  return best;
+}
+
+function negamax(pos, side, depth, alpha, beta, ply, start, timeMs){
+  if(depth===0){ return quiescence(pos, side, alpha, beta); }
+  if(performance.now()-start>timeMs) return evaluate(pos) * (side===RED?1:-1);
+
+  const key = ZobHash.key(pos, side);
+  const tt = TT.get(key);
+  if(tt && tt.depth>=depth){
+    if(tt.flag===TT_EXACT) return tt.score;
+    else if(tt.flag===TT_LOWER && tt.score>alpha) alpha=tt.score;
+    else if(tt.flag===TT_UPPER && tt.score<beta) beta=tt.score;
+    if(alpha>=beta) return tt.score;
+  }
+
+  const gen = generateMoves(pos, side);
+  if(gen.length===0){ return inCheck(pos, side) ? -9999 + ply : 0; }
+
+  const moves = orderMoves(pos, side, gen, tt?tt.best:null, ply);
+  let best=-1e9; let bestMove=null; let flag=TT_UPPER;
+
+  for(const m of moves){
+    const child = makeMove(pos, m);
+    const score = -negamax(child, other(side), depth-1, -beta, -alpha, ply+1, start, timeMs);
+    if(score>best){ best=score; bestMove=m; }
+    if(score>alpha){ alpha=score; flag=TT_EXACT; bumpHistory(m, depth); }
+    if(alpha>=beta){ pushKiller(ply, m); flag=TT_LOWER; break; }
+    if(performance.now()-start>timeMs) break;
+  }
+  TT.set(key, {depth, score:best, flag, best:bestMove});
+  return best;
+}
+
+function getAiParams(){
+  const lv = id('aiLevel').value;
+  if(lv==='fast') return {depth:4, time:600};
+  if(lv==='hard') return {depth:7, time:1200};
+  return {depth:6, time:900}; // std
+}
+
+function aiMove(){
+  const me = BLACK;
+  const {depth,time} = getAiParams();
+  const best = searchRoot(state.pieces, me, depth, time);
+  if(best){ applyMove(best) } else { toast('AI 无合法着法'); }
+}
+
+function other(c){return c===RED?BLACK:RED}
+
+// --- Minimal test harness ---
+function runTests(){
+  const log=id('testlog');
+  log.textContent='';
+  const out=[];
+  function assert(cond, msg){ out.push((cond?'✅ ':'❌ ')+msg); }
+  function at(arr,x,y){ return arr.find(p=>p.x===x&&p.y===y); }
+
+  // 1) Regression: capture with moving piece index after captured index (original bug)
+  (function(){
+    const pos=[{t:'r',x:0,y:5,c:'black'},{t:'R',x:0,y:0,c:'red'}]; // captured first (index 0), mover second (index 1)
+    const moved= makeMove(pos,{from:sq(0,0), to:sq(0,5)});
+    assert(moved.length===1 && at(moved,0,5) && moved[0].t==='R', '修复：吃子时不再因索引移动导致 next[i] 为 undefined');
+  })();
+
+  // 2) Soldier sideways after river
+  (function(){
+    const pos=[{t:'P',x:4,y:4,c:'red'}];
+    const moves= legalMovesForPiece(pos,pos[0],true);
+    const ok = moves.some(m=>m.x===3&&m.y===4) && moves.some(m=>m.x===5&&m.y===4) && moves.some(m=>m.x===4&&m.y===3);
+    assert(ok, '兵过河后可左右与前进');
+  })();
+
+  // 3) Cannon must have exactly one screen to capture
+  (function(){
+    const cannon={t:'C',x:0,y:0,c:'red'};
+    const enemy={t:'r',x:0,y:3,c:'black'};
+    const screen={t:'N',x:0,y:1,c:'red'};
+    const posNoScreen=[cannon, enemy];
+    const posOneScreen=[cannon, screen, enemy];
+    const m0 = legalMovesForPiece(posNoScreen, cannon, true);
+    const m1 = legalMovesForPiece(posOneScreen, cannon, true);
+    const can0 = m0.some(m=>m.x===0&&m.y===3);
+    const can1 = m1.some(m=>m.x===0&&m.y===3);
+    assert(!can0 && can1, '炮吃子需隔一子');
+  })();
+
+  // 4) Rooks cannot move to expose flying generals
+  (function(){
+    const redK={t:'K',x:4,y:9,c:'red'}; const blkK={t:'k',x:4,y:0,c:'black'}; const rook={t:'R',x:4,y:5,c:'red'};
+    const pos=[redK, blkK, rook];
+    const moves = generateMoves(pos, 'red');
+    // any move that moves rook off file (x!=4) should be filtered out because it would cause faceEachOther
+    const illegal = moves.filter(m=>{ const a=toXY(m.from), b=toXY(m.to); return a.x===4 && a.y===5 && b.x!==4; });
+    assert(illegal.length===0, '走子后不得出现“将帅对脸”');
+  })();
+
+  // 5) Basic in-check evaluation symmetry
+  (function(){
+    const redK={t:'K',x:4,y:9,c:'red'}; const blkK={t:'k',x:4,y:0,c:'black'}; const rook={t:'r',x:4,y:5,c:'black'};
+    const pos=[redK, blkK, rook];
+    assert(inCheck(pos,'red')===true && inCheck(pos,'black')===false, '被将军检测：红方被黑车将军');
+  })();
+
+  // 6) AI tactical test: black should capture a free piece in one ply
+  (function(){
+    const me=BLACK;
+    const pos=[
+      {t:'K',x:4,y:9,c:RED},{t:'k',x:4,y:0,c:BLACK},
+      {t:'R',x:0,y:9,c:RED},{t:'r',x:0,y:0,c:BLACK},
+      {t:'N',x:2,y:7,c:RED}, // hanging red knight at (2,7)
+      {t:'r',x:2,y:0,c:BLACK} // black rook on same file can capture
+    ];
+    const best = searchRoot(pos, me, 4, 300); // quick search
+    assert(best && toXY(best.to).x===2 && toXY(best.to).y===7, 'AI 能识别并优先吃掉无保护的子');
+  })();
+
+  log.textContent = out.join('\n');
+  toast('测试完成，详见测试日志');
+}
+
+id('runTestsBtn').addEventListener('click', runTests);
+
+// init
+renderPieces();
+// run smoke tests once on load to catch regressions early
+runTests();
+</script>
+</body>
+</html>
